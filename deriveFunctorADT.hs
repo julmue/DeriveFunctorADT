@@ -1,13 +1,18 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
--- {-# LANGUAGE OverlappingInstances #-}
+{-# LANGUAGE PolyKinds #-}
 
 module DeriveFunctor where
 
-import Prelude (Show, id, (.), (+), ($), Int)
+import Prelude (Show, id, (.), (+), ($), Int, Maybe(Just, Nothing))
 
 -- ADT building blocks
+fix  ::  (a -> a) -> a
+fix  f = let a = f a in a
+
+void :: a
+void = fix id
 
 -- zero
 data Void = Void Void deriving Show
@@ -29,10 +34,20 @@ data Const a b = Const a deriving Show
 -- identity in CAT
 data Id a = Id a deriving Show
 
+-- type level function composition
+newtype Compose (g :: * -> *) (f :: * -> *) (a :: *) = Compose (g (f a))
+  deriving Show
+
+infixr 9 :.:
+type (a :.: b) = Compose a b
+
 -- functors and bifunctors
 -- Functor: unary function between categories c1 -> c2
 class Functor (f :: * -> *) where
   fmap :: (a -> b) -> f a -> f b
+
+instance (Functor f, Functor g) => Functor (g :.: f) where
+   fmap f (Compose x) = Compose $ (fmap . fmap) f x
 
 instance Functor Id where
   fmap f (Id a) = Id (f a)
@@ -71,22 +86,57 @@ instance (Bifunctor bf, Functor fu, Functor gu) =>
 -- -----------------------------------------------------------------------------
 -- option type from primitives
 
--- type Maybe a = Const Unit a :+: Id a
-type Maybe a = BiComp (:+:) (Const Unit) Id a a
+-- why is the last position meaningless?
+type Option = BiComp (:+:) (Const Unit) Id Void
 
+nothing :: Option a
 nothing =  BiComp . L . Const $ Unit
 
-just :: a -> Maybe a
-just = BiComp . R . Id
+option :: a -> Option a
+option = BiComp . R . Id
 
-justVal :: Maybe Int
-justVal = just 42
+optionVal :: Option Int
+optionVal = option 42
 
 succ :: Int -> Int
 succ x = x + 1
 
-test1 :: Maybe Int
-test1 = fmap succ justVal
+test1 :: Option Int
+test1 = fmap succ optionVal
 
-test2 :: Maybe Int
+test2 :: Option Int
 test2 = fmap succ nothing
+
+-- type level composition works
+type Composition = (Option :.: [])
+
+composition :: a -> (Option :.: Id) a
+composition = Compose . option . Id
+
+compVal :: (Option :.: Id) Int
+compVal = composition 42
+
+test3 = fmap succ compVal
+
+
+-- -----------------------------------------------------------------------------
+-- these type (inclusive OR) from primitives
+
+-- simple
+-- type These a b = a :+: a :*: b :+: b
+-- type These a b = (Id a) :+: ((Id a) :*: (Id b)) :+: (Id b)
+
+-- type These a b = (Id a) :+: (Compose (:+:) ((Id a) :*: (Id b)) (Id b))
+
+type Test a b = (Id a :*: Id b)
+
+-- sinistral :: a -> These a b
+-- sinistral = L . Id
+
+-- medial :: a -> b -> These a b
+-- medial a b = R . L $ (Id a) :*: (Id b)
+
+-- dextral :: b -> These a b
+-- dextral = R . R . Id
+
+-- type These = (:+:)
